@@ -1,0 +1,18 @@
+[project]
+name = "ncm2mp3"
+version = "0.1.0"
+description = "PyQt desktop app for batch converting NCM files to MP3"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pycryptodome>=3.23.0",
+    "pyinstaller>=6.19.0",
+    "pyqt5>=5.15.11",
+]
+
+[project.scripts]
+ncm2mp3 = "main:main"
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
