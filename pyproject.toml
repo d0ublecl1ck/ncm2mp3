@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ncm2mp3 = "main:main"
+ncm2mp3 = "ncm2mp3:main"
 
 [tool.uv]
 # Ensure the lockfile is valid for both local Windows dev and Apple Silicon macOS.

@@ -14,13 +14,13 @@
 
 ```bash
 uv sync
-uv run python main.py
+uv run python ncm2mp3.py
 ```
 
 ## 打包
 
 ```bash
-uv run pyinstaller --noconfirm --windowed --name ncm2mp3 main.py
+uv run pyinstaller --noconfirm --windowed --name ncm2mp3 ncm2mp3.py
 ```
 
 打包完成后：

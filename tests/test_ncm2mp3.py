@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication
 
-from main import DecodedAudio, MainWindow, build_key_box, strip_prefix, transcode_to_mp3
+from ncm2mp3 import DecodedAudio, MainWindow, build_key_box, strip_prefix, transcode_to_mp3
 
 
 class HelperTests(unittest.TestCase):
