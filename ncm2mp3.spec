@@ -1,10 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+import sys
+import os
+from pathlib import Path
+
+# 根据平台选择要打包的 ffmpeg
+if sys.platform == 'darwin':
+    ffmpeg_binaries = [('binaries/macos/ffmpeg', 'binaries/macos')]
+elif sys.platform == 'win32':
+    # Windows: 包含 ffmpeg.exe 和所有 DLL 依赖
+    ffmpeg_binaries = []
+    windows_bin_dir = Path('binaries/windows')
+    for file in windows_bin_dir.glob('*'):
+        if file.is_file():
+            ffmpeg_binaries.append((str(file), 'binaries/windows'))
+else:
+    ffmpeg_binaries = []
+
 a = Analysis(
     ['ncm2mp3.py'],
     pathex=[],
-    binaries=[],
+    binaries=ffmpeg_binaries,
     datas=[],
     hiddenimports=[],
     hookspath=[],

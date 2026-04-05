@@ -126,6 +126,31 @@ def decode_ncm_file(file_path: Path) -> DecodedAudio:
     return DecodedAudio(format_name=format_name, audio_bytes=bytes(audio))
 
 
+def get_ffmpeg_path() -> str | None:
+    """获取 ffmpeg 路径，优先使用内置版本。"""
+    # 检查是否是 PyInstaller 打包环境
+    if getattr(sys, 'frozen', False):
+        # 打包后的可执行文件目录
+        base_path = Path(sys._MEIPASS)
+    else:
+        # 开发环境：项目根目录
+        base_path = Path(__file__).parent
+
+    # 根据平台选择内置 ffmpeg
+    if sys.platform == 'darwin':
+        bundled = base_path / "binaries" / "macos" / "ffmpeg"
+    elif sys.platform == 'win32':
+        bundled = base_path / "binaries" / "windows" / "ffmpeg.exe"
+    else:
+        bundled = None
+
+    if bundled and bundled.exists():
+        return str(bundled)
+
+    # 回退到系统 PATH
+    return shutil.which("ffmpeg")
+
+
 def transcode_to_mp3(decoded_audio: DecodedAudio, output_file: Path) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -133,7 +158,7 @@ def transcode_to_mp3(decoded_audio: DecodedAudio, output_file: Path) -> None:
         output_file.write_bytes(decoded_audio.audio_bytes)
         return
 
-    ffmpeg_path = shutil.which("ffmpeg")
+    ffmpeg_path = get_ffmpeg_path()
     if ffmpeg_path is None:
         raise NCMError("未检测到 ffmpeg，无法把非 MP3 源音频转成 MP3。")
 
@@ -168,6 +193,35 @@ def transcode_to_mp3(decoded_audio: DecodedAudio, output_file: Path) -> None:
         temp_path.unlink(missing_ok=True)
 
 
+def transcode_flac_to_mp3(flac_file: Path, output_file: Path) -> None:
+    """使用 ffmpeg 将 FLAC 文件转码为 MP3。"""
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    ffmpeg_path = get_ffmpeg_path()
+    if ffmpeg_path is None:
+        raise NCMError("未检测到 ffmpeg，无法将 FLAC 转成 MP3。")
+
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(flac_file),
+        "-vn",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "2",
+        str(output_file),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        stderr = completed.stderr.strip() or completed.stdout.strip() or "未知错误"
+        raise NCMError(f"ffmpeg 转码失败：{stderr}")
+
+
 class ConvertWorker(QThread):
     progress_changed = pyqtSignal(int)
     status_changed = pyqtSignal(str)
@@ -180,18 +234,29 @@ class ConvertWorker(QThread):
 
     def run(self) -> None:
         try:
+            # 同时支持 .ncm 和 .flac 文件
             ncm_files = sorted(self.folder.glob("*.ncm"))
-            if not ncm_files:
-                raise NCMError("所选文件夹中没有找到 .ncm 文件。")
+            flac_files = sorted(self.folder.glob("*.flac"))
+            all_files = ncm_files + flac_files
 
-            total = len(ncm_files)
+            if not all_files:
+                raise NCMError("所选文件夹中没有找到 .ncm 或 .flac 文件。")
+
+            total = len(all_files)
             self.progress_changed.emit(0)
 
-            for index, ncm_file in enumerate(ncm_files, start=1):
-                self.status_changed.emit(f"正在转换：{ncm_file.name}")
-                decoded_audio = decode_ncm_file(ncm_file)
-                output_path = ncm_file.with_suffix(".mp3")
-                transcode_to_mp3(decoded_audio, output_path)
+            for index, audio_file in enumerate(all_files, start=1):
+                self.status_changed.emit(f"正在转换：{audio_file.name}")
+                output_path = audio_file.with_suffix(".mp3")
+
+                if audio_file.suffix.lower() == ".ncm":
+                    # NCM 文件：先解密，再转码（如果需要）
+                    decoded_audio = decode_ncm_file(audio_file)
+                    transcode_to_mp3(decoded_audio, output_path)
+                elif audio_file.suffix.lower() == ".flac":
+                    # FLAC 文件：直接使用 ffmpeg 转码
+                    transcode_flac_to_mp3(audio_file, output_path)
+
                 progress = int(index / total * 100)
                 self.progress_changed.emit(progress)
 
@@ -277,13 +342,13 @@ class MainWindow(QMainWindow):
         card_layout.setContentsMargins(28, 28, 28, 28)
         card_layout.setSpacing(18)
 
-        title = QLabel("NCM 批量转 MP3")
+        title = QLabel("NCM/FLAC 批量转 MP3")
         title_font = QFont()
         title_font.setPointSize(24)
         title_font.setBold(True)
         title.setFont(title_font)
 
-        subtitle = QLabel("选择一个文件夹后，程序会把其中所有 .ncm 文件转换成同名 .mp3 文件。")
+        subtitle = QLabel("选择一个文件夹后，程序会把其中所有 .ncm 和 .flac 文件转换成同名 .mp3 文件。")
         subtitle.setWordWrap(True)
         subtitle.setProperty("pathRole", "muted")
 
