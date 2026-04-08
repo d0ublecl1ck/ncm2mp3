@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -25,13 +26,30 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt5.QtWidgets import QSizePolicy
+from PyQt5.QtWidgets import QSizePolicy, QAction
+
+from licensing.activation_dialog import LicenseChecker
 
 
 CORE_KEY = bytes.fromhex("687A4852416D736F356B496E62617857")
 META_KEY = bytes.fromhex("2331346C6A6B5F215C5D2630553C2728")
 NCM_HEADER = bytes.fromhex("4354454e4644414d")
 DEFAULT_WINDOW_SIZE = (720, 420)
+BUNDLED_FFMPEG_HASHES = {
+    "darwin": {
+        "binaries/macos/ffmpeg": "dfe6df9286909cc6a6bfbe867c8461fe79f732ce5ed996991ea2d43054b39b5e",
+    },
+    "win32": {
+        "binaries/windows/ffmpeg.exe": "0692c94df5862bd09ba10c6572f27e6992c7640babb493bf8081161b1098a2f4",
+        "binaries/windows/avcodec-62.dll": "2df72c409c1d3be23ece29418407c6975f38c0c330ebc7ff64f4908fb731a274",
+        "binaries/windows/avdevice-62.dll": "f3d915bbeaba44e145e781f6df08c9cfb6ee3862d3926e517d60f908d38cd2e7",
+        "binaries/windows/avfilter-11.dll": "60d0fef7a898c2c836097147ab63d8f208d105fd5bd02e6f767c5aa928124e20",
+        "binaries/windows/avformat-62.dll": "342d05db0efcc2cd64a1494257aa477ac8197bb393bf7a820fa512d1ac9fdf43",
+        "binaries/windows/avutil-60.dll": "068cbb59923354c3761256367582fc2ddbb77567648f3dd20aa1518e9aefa89d",
+        "binaries/windows/swresample-6.dll": "481754633d53d7c39a1d32e2e52bb58a9f544fd6a5f867a10560f318f18e8540",
+        "binaries/windows/swscale-9.dll": "2c499598b334dff9ccdcd51b252d7d5a2cc848efd436187cede9134fd31b60f1",
+    },
+}
 
 
 class NCMError(Exception):
@@ -129,7 +147,7 @@ def decode_ncm_file(file_path: Path) -> DecodedAudio:
 def get_ffmpeg_path() -> str | None:
     """获取 ffmpeg 路径，优先使用内置版本。"""
     # 检查是否是 PyInstaller 打包环境
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         # 打包后的可执行文件目录
         base_path = Path(sys._MEIPASS)
     else:
@@ -137,18 +155,38 @@ def get_ffmpeg_path() -> str | None:
         base_path = Path(__file__).parent
 
     # 根据平台选择内置 ffmpeg
-    if sys.platform == 'darwin':
+    if sys.platform == "darwin":
         bundled = base_path / "binaries" / "macos" / "ffmpeg"
-    elif sys.platform == 'win32':
+    elif sys.platform == "win32":
         bundled = base_path / "binaries" / "windows" / "ffmpeg.exe"
     else:
         bundled = None
 
     if bundled and bundled.exists():
+        verify_bundled_ffmpeg(base_path, sys.platform)
         return str(bundled)
 
     # 回退到系统 PATH
     return shutil.which("ffmpeg")
+
+
+def file_sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_bundled_ffmpeg(base_path: Path, platform_name: str) -> None:
+    expected_hashes = BUNDLED_FFMPEG_HASHES.get(platform_name, {})
+    for relative_path, expected_hash in expected_hashes.items():
+        file_path = base_path / relative_path
+        if not file_path.is_file():
+            raise NCMError(f"内置 FFmpeg 文件缺失：{relative_path}")
+        actual_hash = file_sha256(file_path)
+        if actual_hash != expected_hash:
+            raise NCMError(f"内置 FFmpeg 文件校验失败：{relative_path}")
 
 
 def transcode_to_mp3(decoded_audio: DecodedAudio, output_file: Path) -> None:
@@ -271,12 +309,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.selected_folder: Path | None = None
         self.worker: ConvertWorker | None = None
-        self.setWindowTitle("NCM 转 MP3")
+        self.setWindowTitle("NCM/FLAC 转 MP3")
         self.resize(*DEFAULT_WINDOW_SIZE)
         self.setMinimumSize(680, 380)
         self._init_ui()
 
     def _init_ui(self) -> None:
+        # 创建菜单栏
+        self._create_menu_bar()
+
         self.setStyleSheet(
             """
             QMainWindow {
@@ -406,6 +447,36 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(card)
         self.setCentralWidget(central)
 
+    def _create_menu_bar(self) -> None:
+        """创建菜单栏"""
+        menubar = self.menuBar()
+
+        # 帮助菜单
+        help_menu = menubar.addMenu("帮助")
+
+        # 激活状态菜单项
+        license_action = QAction("🔒 激活状态", self)
+        license_action.triggered.connect(self._show_license_info)
+        help_menu.addAction(license_action)
+
+        # 关于菜单项
+        about_action = QAction("关于", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _show_license_info(self) -> None:
+        """显示许可证信息"""
+        LicenseChecker.show_activation_info(self)
+
+    def _show_about(self) -> None:
+        """显示关于对话框"""
+        QMessageBox.information(
+            self, "关于",
+            "NCM2MP3 - 音频格式转换工具\n\n"
+            "支持 .ncm 和 .flac 格式批量转换为 MP3\n\n"
+            "© 2025 All Rights Reserved"
+        )
+
     def _apply_button_metrics(self, button: QPushButton) -> None:
         font = QFont()
         font.setPointSize(14)
@@ -416,7 +487,7 @@ class MainWindow(QMainWindow):
         button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def choose_folder(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择包含 NCM 文件的文件夹")
+        chosen = QFileDialog.getExistingDirectory(self, "选择包含 NCM/FLAC 文件的文件夹")
         if not chosen:
             return
 
@@ -474,6 +545,11 @@ def main() -> None:
     palette.setColor(palette.Button, QColor("#171717"))
     palette.setColor(palette.ButtonText, QColor("#ffffff"))
     app.setPalette(palette)
+
+    # 检查许可证（启动时验证）
+    if not LicenseChecker.check_and_prompt():
+        # 用户取消激活或激活失败，退出程序
+        sys.exit(0)
 
     window = MainWindow()
     window.show()

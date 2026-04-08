@@ -1,10 +1,20 @@
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication
 
-from ncm2mp3 import DecodedAudio, MainWindow, build_key_box, strip_prefix, transcode_to_mp3
+from licensing import LicenseManager, fingerprint_hash, normalize_fingerprint, validate_fingerprint
+from ncm2mp3 import (
+    DecodedAudio,
+    MainWindow,
+    build_key_box,
+    file_sha256,
+    strip_prefix,
+    transcode_to_mp3,
+    verify_bundled_ffmpeg,
+)
 
 
 class HelperTests(unittest.TestCase):
@@ -27,6 +37,41 @@ class HelperTests(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertEqual(output.read_bytes(), b"fake-mp3-bytes")
 
+    def test_verify_bundled_ffmpeg_accepts_expected_hashes(self) -> None:
+        verify_bundled_ffmpeg(Path("."), "darwin")
+
+    def test_verify_bundled_ffmpeg_rejects_tampered_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "binaries" / "macos"
+            target.mkdir(parents=True, exist_ok=True)
+            (target / "ffmpeg").write_bytes(b"tampered")
+            with self.assertRaisesRegex(Exception, "校验失败"):
+                verify_bundled_ffmpeg(root, "darwin")
+
+
+class LicenseTests(unittest.TestCase):
+    def test_env_public_key_no_longer_overrides_embedded_key(self) -> None:
+        with mock.patch.dict("os.environ", {"NCM2MP3_PUBLIC_KEY": "ZmFrZQ=="}, clear=False):
+            manager = LicenseManager()
+        self.assertIsNotNone(manager.public_key)
+
+    def test_fingerprint_requires_cpu_and_mac_address(self) -> None:
+        valid, message = validate_fingerprint(
+            normalize_fingerprint({"cpu_id": "", "mac_address": "", "disk_serial": "", "platform": "darwin"})
+        )
+        self.assertFalse(valid)
+        self.assertIn("关键标识", message)
+
+    def test_fingerprint_hash_is_stable(self) -> None:
+        payload = {
+            "cpu_id": "cpu-123",
+            "mac_address": "aa:bb:cc:dd:ee:ff",
+            "disk_serial": "disk-123",
+            "platform": "darwin",
+        }
+        self.assertEqual(fingerprint_hash(payload), fingerprint_hash(dict(payload)))
+
 
 class WindowTests(unittest.TestCase):
     @classmethod
@@ -35,7 +80,7 @@ class WindowTests(unittest.TestCase):
 
     def test_window_defaults(self) -> None:
         window = MainWindow()
-        self.assertEqual(window.windowTitle(), "NCM 转 MP3")
+        self.assertEqual(window.windowTitle(), "NCM/FLAC 转 MP3")
         self.assertFalse(window.convert_button.isEnabled())
         self.assertEqual(window.progress_bar.value(), 0)
 

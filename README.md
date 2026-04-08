@@ -21,6 +21,7 @@ uv run python ncm2mp3.py
 ## 内置 FFmpeg
 
 本项目已支持将 `ffmpeg` 打包到应用内，用户无需手动安装。
+程序会先校验内置二进制的 SHA-256，再决定是否执行，避免打包产物中的 `ffmpeg` 或依赖 DLL 被静默替换。
 
 ### 准备 ffmpeg 二进制文件
 
@@ -38,6 +39,8 @@ binaries/
 
 - **macOS**: https://evermeet.cx/ffmpeg/ （下载静态编译版）或 `brew install ffmpeg` 后复制 `/opt/homebrew/bin/ffmpeg`
 - **Windows**: https://github.com/BtbN/FFmpeg-Builds/releases （下载 `ffmpeg-master-latest-win64-gpl.zip`，解压取 `ffmpeg.exe`）
+
+更新内置二进制后，需要同步更新 [ncm2mp3.py](/Users/d0ublecl1ck/ncm2mp3/ncm2mp3.py) 里的 `BUNDLED_FFMPEG_HASHES`，否则程序会拒绝执行被替换的文件。
 
 ### macOS 准备 ffmpeg 示例
 
@@ -73,3 +76,23 @@ pyinstaller ncm2mp3.spec
 - `PyQt5`
 - `pycryptodome`
 - `ffmpeg`（已内置）
+
+## 软件授权（一机一码）
+
+本软件采用 **RSA 数字签名** + **机器码绑定** 的授权机制：
+
+1. **首次启动**：显示激活窗口，生成机器码
+2. **用户操作**：复制机器码发送给管理员
+3. **管理员操作**：在仓库外保存私钥，并通过环境变量指定私钥路径后生成注册码
+4. **激活**：用户输入注册码完成激活
+
+默认的密钥生成脚本会把新密钥写到 `~/.ncm2mp3-admin/`，避免把私钥落进仓库。
+
+### 生成注册码（管理员）
+
+```bash
+export NCM2MP3_PRIVATE_KEY_PATH=/secure/path/private_key.pem
+uv run python licensing/server_license.py
+```
+
+详细说明参见 [`licensing/README.md`](licensing/README.md)
